@@ -1,0 +1,64 @@
+# 模型配置
+model:
+  name: "efficientnet_b3"      # 基础模型架构
+  num_classes: 1               # 回归输出（1个分数）
+  pretrained: true             # 使用 ImageNet 预训练权重
+  dropout: 0.3                 # 全连接层 dropout
+
+# 训练配置
+training:
+  epochs: 50
+  batch_size: 16
+  num_workers: 4
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  
+  # 学习率调度
+  lr_scheduler:
+    type: "cosine"
+    T_max: 50                  # 与 epochs 一致
+    eta_min: 0.00001
+  
+  # 早停
+  early_stopping:
+    patience: 10
+    min_delta: 0.001
+  
+  # 数据增强
+  augmentation:
+    enabled: true
+    horizontal_flip: 0.5
+    rotation: 15               # 随机旋转角度
+    color_jitter:
+      brightness: 0.2
+      contrast: 0.2
+      saturation: 0.1
+    
+  # 保存策略
+  save_best_only: true
+  checkpoint_interval: 10      # 每 N 个 epoch 保存一次
+
+# 数据配置
+data:
+  img_size: 300                # EfficientNet-B3 推荐尺寸
+  train_split: 0.8             # 训练集比例
+  val_split: 0.2               # 验证集比例
+  
+  # 分数映射（将分类转为回归分数）
+  # good 文件夹的照片会被赋予 7-10 之间的随机分数
+  # bad 文件夹的照片会被赋予 1-6 之间的随机分数
+  # 如果你有更精细的标注，可以修改这部分
+  score_mapping:
+    good_min: 7.0
+    good_max: 10.0
+    bad_min: 1.0
+    bad_max: 6.0
+
+# 路径配置
+paths:
+  data_root: "./data"
+  good_dir: "./data/good"
+  bad_dir: "./data/bad"
+  model_save_dir: "./models"
+  log_dir: "./logs"
+  output_dir: "./outputs"
