@@ -1,7 +1,7 @@
 # 模型配置
 model:
   name: "efficientnet_b3"      # 基础模型架构
-  num_classes: 1               # 回归输出（1个分数）
+  num_classes: 4               # 4个输出：构图、表情、动作、总分
   pretrained: true             # 使用 ImageNet 预训练权重
   dropout: 0.3                 # 全连接层 dropout
 
@@ -44,10 +44,15 @@ data:
   train_split: 0.8             # 训练集比例
   val_split: 0.2               # 验证集比例
   
+  # 多维度标注文件路径（可选）
+  # 如果存在，会优先使用标注文件中的构图/表情/动作分数
+  # 如果不存在，使用 good/bad 分类的简单标签
+  # 使用 src/annotate.py 工具创建标注文件
+  # annotations_file: "./data/annotations.json"
+  
   # 分数映射（将分类转为回归分数）
   # good 文件夹的照片会被赋予 7-10 之间的随机分数
   # bad 文件夹的照片会被赋予 1-6 之间的随机分数
-  # 如果你有更精细的标注，可以修改这部分
   score_mapping:
     good_min: 7.0
     good_max: 10.0

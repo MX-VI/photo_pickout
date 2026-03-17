@@ -1,5 +1,5 @@
 """
-模型训练脚本
+多维度模型训练脚本
 """
 
 import os
@@ -17,57 +17,92 @@ from model import get_model
 from dataset import get_data_loaders
 
 
+class MultiDimLoss(nn.Module):
+    """多维度评分损失函数"""
+    
+    def __init__(self, weights=None):
+        super().__init__()
+        self.weights = weights or {
+            'composition': 1.0,
+            'expression': 1.0,
+            'pose': 1.0,
+            'overall': 2.0  # 总分权重更高
+        }
+        self.mse = nn.MSELoss()
+    
+    def forward(self, predictions, targets):
+        loss = 0
+        for key in self.weights:
+            loss += self.weights[key] * self.mse(predictions[key], targets[key])
+        return loss
+
+
 def train_epoch(model, train_loader, criterion, optimizer, device):
     """训练一个 epoch"""
     model.train()
     total_loss = 0.0
+    dim_losses = {'composition': 0, 'expression': 0, 'pose': 0, 'overall': 0}
     
     pbar = tqdm(train_loader, desc='Training')
     for images, scores in pbar:
         images = images.to(device)
-        scores = scores.to(device)
+        targets = {k: v.to(device) for k, v in scores.items()}
         
         optimizer.zero_grad()
         outputs = model(images)
-        loss = criterion(outputs, scores)
+        
+        # 计算各维度损失
+        loss = criterion(outputs, targets)
+        
         loss.backward()
         optimizer.step()
         
         total_loss += loss.item()
+        
+        # 记录各维度损失
+        with torch.no_grad():
+            for key in dim_losses:
+                dim_loss = nn.functional.mse_loss(outputs[key], targets[key])
+                dim_losses[key] += dim_loss.item()
+        
         pbar.set_postfix({'loss': f'{loss.item():.4f}'})
     
-    return total_loss / len(train_loader)
+    # 平均损失
+    for key in dim_losses:
+        dim_losses[key] /= len(train_loader)
+    
+    return total_loss / len(train_loader), dim_losses
 
 
 def validate(model, val_loader, criterion, device):
     """验证模型"""
     model.eval()
     total_loss = 0.0
-    predictions = []
-    targets = []
+    dim_maes = {'composition': [], 'expression': [], 'pose': [], 'overall': []}
     
     with torch.no_grad():
         for images, scores in tqdm(val_loader, desc='Validation'):
             images = images.to(device)
-            scores = scores.to(device)
+            targets = {k: v.to(device) for k, v in scores.items()}
             
             outputs = model(images)
-            loss = criterion(outputs, scores)
+            loss = criterion(outputs, targets)
             
             total_loss += loss.item()
-            predictions.extend(outputs.cpu().numpy())
-            targets.extend(scores.cpu().numpy())
+            
+            # 记录各维度 MAE
+            for key in dim_maes:
+                mae = torch.abs(outputs[key] - targets[key]).mean().item()
+                dim_maes[key].append(mae)
     
-    # 计算 MAE (Mean Absolute Error)
-    predictions = torch.tensor(predictions)
-    targets = torch.tensor(targets)
-    mae = torch.abs(predictions - targets).mean().item()
+    # 计算平均 MAE
+    avg_maes = {k: sum(v) / len(v) for k, v in dim_maes.items()}
     
-    return total_loss / len(val_loader), mae
+    return total_loss / len(val_loader), avg_maes
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train Photo Pickout Model')
+    parser = argparse.ArgumentParser(description='Train Photo Pickout Multi-Dim Model')
     parser.add_argument('--config', type=str, default='./configs/config.yaml',
                        help='配置文件路径')
     parser.add_argument('--epochs', type=int, default=None,
@@ -104,7 +139,7 @@ def main():
     print("\nLoading data...")
     train_loader, val_loader = get_data_loaders(config)
     
-    if len(train_loader.dataset) == 0:
+    if train_loader is None or len(train_loader.dataset) == 0:
         print("错误：没有找到训练数据！")
         print(f"请将照片放入 {config['paths']['good_dir']} 和 {config['paths']['bad_dir']}")
         return
@@ -115,7 +150,7 @@ def main():
     model = model.to(device)
     
     # 损失函数和优化器
-    criterion = nn.MSELoss()
+    criterion = MultiDimLoss()
     optimizer = optim.Adam(
         model.parameters(),
         lr=config['training']['learning_rate'],
@@ -150,16 +185,20 @@ def main():
     
     # 训练循环
     print(f"\nStarting training for {config['training']['epochs']} epochs...")
-    print("=" * 50)
+    print("=" * 60)
+    print("训练维度: 构图 | 表情 | 身体动作 | 总分")
+    print("=" * 60)
     
     for epoch in range(start_epoch, config['training']['epochs']):
         print(f"\nEpoch [{epoch+1}/{config['training']['epochs']}]")
         
         # 训练
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss, train_dim_losses = train_epoch(
+            model, train_loader, criterion, optimizer, device
+        )
         
         # 验证
-        val_loss, val_mae = validate(model, val_loader, criterion, device)
+        val_loss, val_maes = validate(model, val_loader, criterion, device)
         
         # 更新学习率
         scheduler.step()
@@ -168,11 +207,16 @@ def main():
         # 记录到 TensorBoard
         writer.add_scalar('Loss/train', train_loss, epoch)
         writer.add_scalar('Loss/val', val_loss, epoch)
-        writer.add_scalar('MAE/val', val_mae, epoch)
+        for key, value in val_maes.items():
+            writer.add_scalar(f'MAE/{key}', value, epoch)
         writer.add_scalar('LR', current_lr, epoch)
         
-        print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
-              f"Val MAE: {val_mae:.4f} | LR: {current_lr:.6f}")
+        # 打印结果
+        print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | LR: {current_lr:.6f}")
+        print(f"  MAE - 构图: {val_maes['composition']:.3f} | "
+              f"表情: {val_maes['expression']:.3f} | "
+              f"动作: {val_maes['pose']:.3f} | "
+              f"总分: {val_maes['overall']:.3f}")
         
         # 保存最佳模型
         if val_loss < best_val_loss:
@@ -185,10 +229,10 @@ def main():
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'best_val_loss': best_val_loss,
-                'val_mae': val_mae,
+                'val_maes': val_maes,
                 'config': config
             }, best_model_path)
-            print(f"  -> Saved best model (Val Loss: {val_loss:.4f})")
+            print(f"  -> Saved best model")
         else:
             patience_counter += 1
         
@@ -208,7 +252,7 @@ def main():
             break
     
     writer.close()
-    print("\n" + "=" * 50)
+    print("\n" + "=" * 60)
     print("Training completed!")
     print(f"Best model saved at: {config['paths']['model_save_dir']}/best_model.pth")
 
