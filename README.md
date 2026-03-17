@@ -31,6 +31,7 @@ photo_pickout/
 │   ├── dataset.py        # 数据加载器
 │   ├── model.py          # 多维度模型定义
 │   └── annotate.py       # 标注工具
+│   └── __init__.py       # 包初始化
 ├── configs/               # 配置文件
 ├── outputs/               # 输出结果
 ├── requirements.txt       # 依赖包
@@ -175,6 +176,24 @@ python src/predict.py --folder path/to/photos/ --output outputs/ --sort --top 20
 - **损失函数**: 多任务 MSE（各维度可配置权重）
 - **总分计算**: 构图 40% + 表情 35% + 动作 25%
 
+## Python API 使用
+
+```python
+from src.model import PhotoScorerMultiDim
+from src.predict import predict_single, load_model
+import torch
+
+# 加载模型
+model, config = load_model('./models/best_model.pth')
+
+# 单张照片评分
+scores = predict_single(model, 'photo.jpg', img_size=300, device='cpu')
+print(f"构图: {scores['composition']:.1f}")
+print(f"表情: {scores['expression']:.1f}")
+print(f"动作: {scores['pose']:.1f}")
+print(f"总分: {scores['overall']:.1f}")
+```
+
 ## 进阶使用
 
 ### 调整总分权重
@@ -204,3 +223,7 @@ MIT License
 ## 作者
 
 MX-VI - 人像摄影师
+
+## 项目链接
+
+GitHub: https://github.com/MX-VI/photo_pickout
